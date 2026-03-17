@@ -4,7 +4,7 @@ import random, string, re, os, time, hashlib, uuid, sqlite3, urllib.request, url
 import json as _json
 from functools import wraps
 
-app = Flask(__name__, static_folder='static')
+app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = "zynx-secret-key-2026-xK9mPqL3vNcR7"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
@@ -167,7 +167,7 @@ def send_email(to, nickname, code):
         return False
 
 @app.route('/')
-def index(): return send_from_directory('static', 'index.html')
+def index(): return send_from_directory('.', 'index.html')
 
 @app.route('/api/register', methods=['POST'])
 def register():
