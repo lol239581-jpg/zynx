@@ -1,12 +1,10 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import random, string, re, os, time, hashlib, uuid, sqlite3
+import random, string, re, os, time, hashlib, uuid, sqlite3, urllib.request, urllib.error
+import json as _json
 from functools import wraps
 
-app = Flask(__name__, static_folder='.', static_url_path='')
+app = Flask(__name__, static_folder='static')
 app.secret_key = "zynx-secret-key-2026-xK9mPqL3vNcR7"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
@@ -129,18 +127,18 @@ def get_profile(nick):
     return {'avatar_color': '#7c5cfc', 'avatar_emoji': '🎮'}
 
 def send_email(to, nickname, code):
-    try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = f"Zynx — код подтверждения: {code}"
-        msg['From']    = f"Zynx <{SMTP_USER}>"
-        msg['To']      = to
-        html = f"""<html><body style="background:#07070e;font-family:sans-serif;padding:40px 20px;">
+    """Отправка через Brevo API (работает на Render бесплатно)"""
+    api_key = os.environ.get('BREVO_API_KEY', '')
+    if not api_key:
+        print("[EMAIL ERROR] BREVO_API_KEY не задан")
+        return False
+    html = f"""<html><body style="background:#07070e;font-family:sans-serif;padding:40px 20px;">
 <div style="max-width:460px;margin:0 auto;background:#141420;border-radius:16px;border:1px solid #252535;overflow:hidden;">
   <div style="background:linear-gradient(135deg,#7c5cfc,#fc5cbc);padding:28px;text-align:center;">
     <h1 style="color:#fff;margin:0;letter-spacing:3px;font-size:24px;">ZYNX</h1>
   </div>
   <div style="padding:32px;">
-    <p style="color:#c0c0d0;">Привет, <b style="color:#fff">{nickname}</b>! 👋</p>
+    <p style="color:#c0c0d0;">Привет, <b style="color:#fff">{nickname}</b>!</p>
     <p style="color:#888;">Твой код подтверждения:</p>
     <div style="background:#1e1e2e;border:2px solid #7c5cfc;border-radius:12px;padding:22px;text-align:center;margin:20px 0;">
       <span style="font-size:40px;font-weight:900;letter-spacing:14px;color:#a78bfa;font-family:monospace;">{code}</span>
@@ -148,29 +146,28 @@ def send_email(to, nickname, code):
     <p style="color:#666;font-size:12px;">Код действует 10 минут.</p>
   </div>
 </div></body></html>"""
-        msg.attach(MIMEText(html, 'html', 'utf-8'))
-        try:
-            s = smtplib.SMTP('smtp.gmail.com', 587, timeout=10)
-            s.ehlo(); s.starttls(); s.ehlo()
-            s.login(SMTP_USER, SMTP_PASS)
-            s.sendmail(SMTP_USER, to, msg.as_string())
-            s.quit()
-            print(f"[EMAIL OK] -> {to}")
-            return True
-        except Exception as e1:
-            print(f"[587 FAILED] {e1} — trying 465...")
-            s = smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10)
-            s.login(SMTP_USER, SMTP_PASS)
-            s.sendmail(SMTP_USER, to, msg.as_string())
-            s.quit()
-            print(f"[EMAIL OK via 465] -> {to}")
+    payload = _json.dumps({
+        "sender": {"name": "Zynx", "email": SMTP_USER},
+        "to": [{"email": to}],
+        "subject": f"Zynx — код подтверждения: {code}",
+        "htmlContent": html
+    }).encode('utf-8')
+    try:
+        req = urllib.request.Request(
+            'https://api.brevo.com/v3/smtp/email',
+            data=payload,
+            headers={'api-key': api_key, 'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            print(f"[EMAIL OK] -> {to} ({resp.status})")
             return True
     except Exception as e:
         print(f"[EMAIL ERROR] {e}")
         return False
 
 @app.route('/')
-def index(): return send_from_directory('.', 'index.html')
+def index(): return send_from_directory('static', 'index.html')
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -388,6 +385,9 @@ def unblock_user():
     conn=get_db()
     conn.execute('DELETE FROM friends WHERE user1=? AND user2=? AND status=?',(me,target,f'blocked_by_{me}'))
     conn.commit(); conn.close()
+    for n in [me, target]:
+        sid=online.get(n)
+        if sid: socketio.emit('friends_update',{},to=sid)
     return jsonify({'ok':True})
 
 @app.route('/api/messages/delete', methods=['POST'])
