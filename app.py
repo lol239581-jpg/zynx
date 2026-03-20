@@ -135,29 +135,18 @@ def get_profile(nick):
 
 def send_email(to, nickname, code):
     api_key = os.environ.get('RESEND_API_KEY', '')
+    print(f"[EMAIL] Начало отправки на {to}, api_key={'ЕСТЬ' if api_key else 'НЕТ'}")
     if not api_key:
         print("[EMAIL ERROR] RESEND_API_KEY не задан")
         return False
-    html = f"""<html><body style="background:#07070e;font-family:sans-serif;padding:40px 20px;">
-<div style="max-width:460px;margin:0 auto;background:#141420;border-radius:16px;border:1px solid #252535;overflow:hidden;">
-  <div style="background:linear-gradient(135deg,#7c5cfc,#fc5cbc);padding:28px;text-align:center;">
-    <h1 style="color:#fff;margin:0;letter-spacing:3px;font-size:24px;">ZYNX</h1>
-  </div>
-  <div style="padding:32px;">
-    <p style="color:#c0c0d0;">Привет, <b style="color:#fff">{nickname}</b>!</p>
-    <p style="color:#888;">Твой код подтверждения:</p>
-    <div style="background:#1e1e2e;border:2px solid #7c5cfc;border-radius:12px;padding:22px;text-align:center;margin:20px 0;">
-      <span style="font-size:40px;font-weight:900;letter-spacing:14px;color:#a78bfa;font-family:monospace;">{code}</span>
-    </div>
-    <p style="color:#666;font-size:12px;">Код действует 10 минут.</p>
-  </div>
-</div></body></html>"""
+    html = f"<p>Код: <b>{code}</b></p>"
     payload = _json.dumps({
-        "from": "Zynx <onboarding@resend.dev>",
+        "from": "onboarding@resend.dev",
         "to": [to],
-        "subject": f"Zynx — код подтверждения: {code}",
+        "subject": f"Zynx код: {code}",
         "html": html
     }).encode('utf-8')
+    print(f"[EMAIL] Payload готов, отправляю запрос...")
     try:
         req = urllib.request.Request(
             'https://api.resend.com/emails',
@@ -166,13 +155,17 @@ def send_email(to, nickname, code):
             method='POST'
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
-            print(f"[EMAIL OK] -> {to} ({resp.status})")
+            body = resp.read().decode()
+            print(f"[EMAIL OK] статус={resp.status} тело={body}")
             return True
-    except Exception as e:
-        print(f"[EMAIL ERROR] {e}")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"[EMAIL HTTPError] код={e.code} тело={body}")
         return False
-
-@app.route('/')
+    except Exception as e:
+        print(f"[EMAIL Exception] {type(e).__name__}: {e}")
+        return False
+        
 def index(): return send_from_directory('.', 'index.html')
 
 @app.route('/api/register', methods=['POST'])
