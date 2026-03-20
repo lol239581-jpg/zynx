@@ -134,9 +134,9 @@ def get_profile(nick):
     return {'avatar_color': '#7c5cfc', 'avatar_emoji': '🎮'}
 
 def send_email(to, nickname, code):
-    api_key = os.environ.get('BREVO_API_KEY', '')
+    api_key = os.environ.get('RESEND_API_KEY', '')
     if not api_key:
-        print("[EMAIL ERROR] BREVO_API_KEY не задан")
+        print("[EMAIL ERROR] RESEND_API_KEY не задан")
         return False
     html = f"""<html><body style="background:#07070e;font-family:sans-serif;padding:40px 20px;">
 <div style="max-width:460px;margin:0 auto;background:#141420;border-radius:16px;border:1px solid #252535;overflow:hidden;">
@@ -153,16 +153,16 @@ def send_email(to, nickname, code):
   </div>
 </div></body></html>"""
     payload = _json.dumps({
-        "sender": {"name": "Zynx", "email": SMTP_USER},
-        "to": [{"email": to}],
+        "from": "Zynx <onboarding@resend.dev>",
+        "to": [to],
         "subject": f"Zynx — код подтверждения: {code}",
-        "htmlContent": html
+        "html": html
     }).encode('utf-8')
     try:
         req = urllib.request.Request(
-            'https://api.brevo.com/v3/smtp/email',
+            'https://api.resend.com/emails',
             data=payload,
-            headers={'api-key': api_key, 'Content-Type': 'application/json'},
+            headers={'Authorization': 'Bearer ' + api_key, 'Content-Type': 'application/json'},
             method='POST'
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
