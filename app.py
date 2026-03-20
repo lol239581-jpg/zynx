@@ -1,17 +1,16 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
-import random, string, re, os, time, hashlib, uuid, sqlite3, urllib.request, urllib.error
+import random, string, re, os, time, hashlib, uuid, urllib.request, urllib.error
 import json as _json
 from functools import wraps
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = "zynx-secret-key-2026-xK9mPqL3vNcR7"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-# ─── CONFIG ── ВСТАВЬ СВОЙ APP PASSWORD НИЖЕ ──────────────────────────────────
 SMTP_USER = "zynx.messanger@gmail.com"
-SMTP_PASS = "gdcf dxhd efii hhwz"
-# ─────────────────────────────────────────────────────────────────────────────
 
 AVATAR_COLORS = ['#7c5cfc','#fc5cbc','#f59e0b','#10b981','#3b82f6','#ef4444','#8b5cf6','#06b6d4']
 AVATAR_EMOJIS = ['🎮','👾','🔥','⚡','🦊','🐺','🐉','👻','🤖','💀','🦁','🐯']
@@ -31,13 +30,16 @@ online = {}
 pending_codes = {}
 
 def get_db():
-    conn = sqlite3.connect('zynx.db')
-    conn.row_factory = sqlite3.Row
+    db_url = os.environ.get('DATABASE_URL', '')
+    if not db_url:
+        raise Exception('DATABASE_URL не задан!')
+    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
     return conn
 
 def init_db():
     conn = get_db()
-    conn.executescript('''
+    cur = conn.cursor()
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
             email TEXT PRIMARY KEY,
             nickname TEXT UNIQUE NOT NULL,
@@ -64,11 +66,12 @@ def init_db():
             text TEXT NOT NULL,
             msg_type TEXT DEFAULT 'text',
             caption TEXT DEFAULT '',
-            time_ms INTEGER NOT NULL,
+            time_ms BIGINT NOT NULL,
             deleted_for TEXT DEFAULT ''
         );
     ''')
     conn.commit()
+    cur.close()
     conn.close()
 
 init_db()
@@ -80,8 +83,10 @@ def require_auth(f):
         if not token:
             return jsonify({'ok': False, 'error': 'Нет токена.'}), 401
         conn = get_db()
-        row = conn.execute('SELECT nickname FROM tokens WHERE token=?', (token,)).fetchone()
-        conn.close()
+        cur = conn.cursor()
+        cur.execute('SELECT nickname FROM tokens WHERE token=%s', (token,))
+        row = cur.fetchone()
+        cur.close(); conn.close()
         if not row:
             return jsonify({'ok': False, 'error': 'Недействительный токен.'}), 401
         request.nickname = row['nickname']
@@ -91,9 +96,9 @@ def require_auth(f):
 def make_token(nickname):
     token = str(uuid.uuid4()).replace('-','') + str(uuid.uuid4()).replace('-','')
     conn = get_db()
-    conn.execute('INSERT INTO tokens (token, nickname, created_at) VALUES (?,?,?)', (token, nickname, time.time()))
-    conn.commit()
-    conn.close()
+    cur = conn.cursor()
+    cur.execute('INSERT INTO tokens (token, nickname, created_at) VALUES (%s,%s,%s)', (token, nickname, time.time()))
+    conn.commit(); cur.close(); conn.close()
     return token
 
 def nick_ok(n):
@@ -121,13 +126,14 @@ def mkcode():    return ''.join(random.choices(string.digits, k=6))
 
 def get_profile(nick):
     conn = get_db()
-    row = conn.execute('SELECT avatar_color, avatar_emoji FROM users WHERE nickname=?', (nick,)).fetchone()
-    conn.close()
+    cur = conn.cursor()
+    cur.execute('SELECT avatar_color, avatar_emoji FROM users WHERE nickname=%s', (nick,))
+    row = cur.fetchone()
+    cur.close(); conn.close()
     if row: return {'avatar_color': row['avatar_color'], 'avatar_emoji': row['avatar_emoji']}
     return {'avatar_color': '#7c5cfc', 'avatar_emoji': '🎮'}
 
 def send_email(to, nickname, code):
-    """Отправка через Brevo API (работает на Render бесплатно)"""
     api_key = os.environ.get('BREVO_API_KEY', '')
     if not api_key:
         print("[EMAIL ERROR] BREVO_API_KEY не задан")
@@ -176,10 +182,12 @@ def register():
     nickname = (d.get('nickname') or '').strip()
     password =  d.get('password') or ''
     if not email_ok(email): return jsonify({'ok':False,'error':'Неверный формат email.'}),400
-    conn = get_db()
-    existing   = conn.execute('SELECT email FROM users WHERE email=?', (email,)).fetchone()
-    nick_taken = conn.execute('SELECT email FROM users WHERE LOWER(nickname)=?', (nickname.lower(),)).fetchone()
-    conn.close()
+    conn = get_db(); cur = conn.cursor()
+    cur.execute('SELECT email FROM users WHERE email=%s', (email,))
+    existing = cur.fetchone()
+    cur.execute('SELECT email FROM users WHERE LOWER(nickname)=%s', (nickname.lower(),))
+    nick_taken = cur.fetchone()
+    cur.close(); conn.close()
     if existing:   return jsonify({'ok':False,'error':'Email уже зарегистрирован.'}),409
     ok,err = nick_ok(nickname)
     if not ok: return jsonify({'ok':False,'error':err}),400
@@ -202,10 +210,10 @@ def verify():
     if time.time() > p['expires_at']:
         del pending_codes[email]; return jsonify({'ok':False,'error':'Код истёк.'}),400
     if p['code'] != code: return jsonify({'ok':False,'error':'Неверный код.'}),400
-    conn = get_db()
-    conn.execute('INSERT OR REPLACE INTO users (email,nickname,password_hash,avatar_color,avatar_emoji,created_at) VALUES (?,?,?,?,?,?)',
+    conn = get_db(); cur = conn.cursor()
+    cur.execute('INSERT INTO users (email,nickname,password_hash,avatar_color,avatar_emoji,created_at) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (email) DO UPDATE SET nickname=EXCLUDED.nickname',
         (email,p['nickname'],p['password_hash'],random.choice(AVATAR_COLORS),random.choice(AVATAR_EMOJIS),time.time()))
-    conn.commit(); conn.close()
+    conn.commit(); cur.close(); conn.close()
     del pending_codes[email]
     token = make_token(p['nickname'])
     return jsonify({'ok':True,'nickname':p['nickname'],'token':token})
@@ -227,9 +235,10 @@ def login():
     d = request.get_json() or {}
     email    = (d.get('email') or '').strip().lower()
     password =  d.get('password') or ''
-    conn = get_db()
-    u = conn.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
-    conn.close()
+    conn = get_db(); cur = conn.cursor()
+    cur.execute('SELECT * FROM users WHERE email=%s', (email,))
+    u = cur.fetchone()
+    cur.close(); conn.close()
     if not u: return jsonify({'ok':False,'error':'Пользователь не найден.'}),404
     if u['password_hash'] != hashpw(password): return jsonify({'ok':False,'error':'Неверный пароль.'}),401
     token = make_token(u['nickname'])
@@ -239,17 +248,18 @@ def login():
 @require_auth
 def logout():
     token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
-    conn = get_db()
-    conn.execute('DELETE FROM tokens WHERE token=?', (token,))
-    conn.commit(); conn.close()
+    conn = get_db(); cur = conn.cursor()
+    cur.execute('DELETE FROM tokens WHERE token=%s', (token,))
+    conn.commit(); cur.close(); conn.close()
     return jsonify({'ok':True})
 
 @app.route('/api/users', methods=['GET'])
 @require_auth
 def get_users():
-    conn = get_db()
-    rows = conn.execute('SELECT nickname, avatar_color, avatar_emoji FROM users').fetchall()
-    conn.close()
+    conn = get_db(); cur = conn.cursor()
+    cur.execute('SELECT nickname, avatar_color, avatar_emoji FROM users')
+    rows = cur.fetchall()
+    cur.close(); conn.close()
     return jsonify({'ok':True,'users':[{'nickname':r['nickname'],'online':r['nickname'] in online,'avatar_color':r['avatar_color'],'avatar_emoji':r['avatar_emoji']} for r in rows]})
 
 @app.route('/api/profile', methods=['GET'])
@@ -257,9 +267,10 @@ def get_users():
 def get_profile_route():
     nick = (request.args.get('nick') or '').strip()
     if not nick: return jsonify({'ok':False}),400
-    conn = get_db()
-    u = conn.execute('SELECT * FROM users WHERE LOWER(nickname)=?', (nick.lower(),)).fetchone()
-    conn.close()
+    conn = get_db(); cur = conn.cursor()
+    cur.execute('SELECT * FROM users WHERE LOWER(nickname)=%s', (nick.lower(),))
+    u = cur.fetchone()
+    cur.close(); conn.close()
     if not u: return jsonify({'ok':False,'error':'Не найден.'}),404
     return jsonify({'ok':True,'profile':{'nickname':u['nickname'],'avatar_color':u['avatar_color'],'avatar_emoji':u['avatar_emoji'],'online':u['nickname'] in online,'created_at':u['created_at']}})
 
@@ -268,12 +279,12 @@ def get_profile_route():
 def update_profile():
     d = request.get_json() or {}
     nick = request.nickname
-    conn = get_db()
+    conn = get_db(); cur = conn.cursor()
     if 'avatar_color' in d and d['avatar_color'] in AVATAR_COLORS:
-        conn.execute('UPDATE users SET avatar_color=? WHERE nickname=?', (d['avatar_color'], nick))
+        cur.execute('UPDATE users SET avatar_color=%s WHERE nickname=%s', (d['avatar_color'], nick))
     if 'avatar_emoji' in d and d['avatar_emoji'] in AVATAR_EMOJIS:
-        conn.execute('UPDATE users SET avatar_emoji=? WHERE nickname=?', (d['avatar_emoji'], nick))
-    conn.commit(); conn.close()
+        cur.execute('UPDATE users SET avatar_emoji=%s WHERE nickname=%s', (d['avatar_emoji'], nick))
+    conn.commit(); cur.close(); conn.close()
     socketio.emit('profile_updated', {'nickname': nick, 'profile': get_profile(nick)})
     return jsonify({'ok':True})
 
@@ -283,9 +294,10 @@ def get_messages():
     other = (request.args.get('with') or '').strip()
     me = request.nickname
     if not other: return jsonify({'ok':False}),400
-    conn = get_db()
-    rows = conn.execute('SELECT * FROM messages WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?) ORDER BY time_ms ASC',(me,other,other,me)).fetchall()
-    conn.close()
+    conn = get_db(); cur = conn.cursor()
+    cur.execute('SELECT * FROM messages WHERE (sender=%s AND receiver=%s) OR (sender=%s AND receiver=%s) ORDER BY time_ms ASC',(me,other,other,me))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
     msgs = []
     for r in rows:
         deleted_for = r['deleted_for'].split(',') if r['deleted_for'] else []
@@ -297,9 +309,10 @@ def get_messages():
 @require_auth
 def get_friends():
     nick = request.nickname
-    conn = get_db()
-    rows = conn.execute('SELECT * FROM friends WHERE user1=? OR user2=?', (nick, nick)).fetchall()
-    conn.close()
+    conn = get_db(); cur = conn.cursor()
+    cur.execute('SELECT * FROM friends WHERE user1=%s OR user2=%s', (nick, nick))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
     friends, sent, received, blocked = [], [], [], []
     for r in rows:
         other = r['user2'] if r['user1'] == nick else r['user1']
@@ -318,23 +331,25 @@ def send_friend_request():
     target = (d.get('to') or '').strip()
     if not target: return jsonify({'ok':False,'error':'Нет данных.'}),400
     if me.lower()==target.lower(): return jsonify({'ok':False,'error':'Нельзя добавить себя.'}),400
-    conn = get_db()
-    tu = conn.execute('SELECT nickname FROM users WHERE LOWER(nickname)=?', (target.lower(),)).fetchone()
-    if not tu: conn.close(); return jsonify({'ok':False,'error':'Пользователь не найден.'}),404
+    conn = get_db(); cur = conn.cursor()
+    cur.execute('SELECT nickname FROM users WHERE LOWER(nickname)=%s', (target.lower(),))
+    tu = cur.fetchone()
+    if not tu: cur.close(); conn.close(); return jsonify({'ok':False,'error':'Пользователь не найден.'}),404
     target = tu['nickname']
-    ex = conn.execute('SELECT * FROM friends WHERE (user1=? AND user2=?) OR (user1=? AND user2=?)',(me,target,target,me)).fetchone()
+    cur.execute('SELECT * FROM friends WHERE (user1=%s AND user2=%s) OR (user1=%s AND user2=%s)',(me,target,target,me))
+    ex = cur.fetchone()
     if ex:
-        if ex['status']=='friends': conn.close(); return jsonify({'ok':False,'error':'Уже в друзьях.'}),400
-        if ex['status']=='pending' and ex['user1']==me: conn.close(); return jsonify({'ok':False,'error':'Заявка уже отправлена.'}),400
+        if ex['status']=='friends': cur.close(); conn.close(); return jsonify({'ok':False,'error':'Уже в друзьях.'}),400
+        if ex['status']=='pending' and ex['user1']==me: cur.close(); conn.close(); return jsonify({'ok':False,'error':'Заявка уже отправлена.'}),400
         if ex['status']=='pending' and ex['user2']==me:
-            conn.execute('UPDATE friends SET status=? WHERE (user1=? AND user2=?) OR (user1=? AND user2=?)',('friends',me,target,target,me))
-            conn.commit(); conn.close()
+            cur.execute('UPDATE friends SET status=%s WHERE (user1=%s AND user2=%s) OR (user1=%s AND user2=%s)',('friends',me,target,target,me))
+            conn.commit(); cur.close(); conn.close()
             for n in [me,target]:
                 sid=online.get(n)
                 if sid: socketio.emit('friends_update',{},to=sid)
             return jsonify({'ok':True,'message':f'Вы теперь друзья с {target}!'})
-    conn.execute('INSERT OR REPLACE INTO friends (user1,user2,status) VALUES (?,?,?)',(me,target,'pending'))
-    conn.commit(); conn.close()
+    cur.execute('INSERT INTO friends (user1,user2,status) VALUES (%s,%s,%s) ON CONFLICT (user1,user2) DO UPDATE SET status=%s',(me,target,'pending','pending'))
+    conn.commit(); cur.close(); conn.close()
     rsid=online.get(target)
     if rsid: socketio.emit('friend_request',{'from':me},to=rsid)
     return jsonify({'ok':True,'message':f'Заявка отправлена {target}!'})
@@ -344,11 +359,12 @@ def send_friend_request():
 def accept_friend():
     d=request.get_json() or {}
     me=request.nickname; sender=(d.get('from') or '').strip()
-    conn=get_db()
-    row=conn.execute('SELECT * FROM friends WHERE user1=? AND user2=? AND status=?',(sender,me,'pending')).fetchone()
-    if not row: conn.close(); return jsonify({'ok':False,'error':'Заявки нет.'}),400
-    conn.execute('UPDATE friends SET status=? WHERE user1=? AND user2=?',('friends',sender,me))
-    conn.commit(); conn.close()
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('SELECT * FROM friends WHERE user1=%s AND user2=%s AND status=%s',(sender,me,'pending'))
+    row=cur.fetchone()
+    if not row: cur.close(); conn.close(); return jsonify({'ok':False,'error':'Заявки нет.'}),400
+    cur.execute('UPDATE friends SET status=%s WHERE user1=%s AND user2=%s',('friends',sender,me))
+    conn.commit(); cur.close(); conn.close()
     for n in [me,sender]:
         sid=online.get(n)
         if sid: socketio.emit('friends_update',{},to=sid)
@@ -359,9 +375,9 @@ def accept_friend():
 def decline_friend():
     d=request.get_json() or {}
     me=request.nickname; sender=(d.get('from') or '').strip()
-    conn=get_db()
-    conn.execute('DELETE FROM friends WHERE user1=? AND user2=? AND status=?',(sender,me,'pending'))
-    conn.commit(); conn.close()
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('DELETE FROM friends WHERE user1=%s AND user2=%s AND status=%s',(sender,me,'pending'))
+    conn.commit(); cur.close(); conn.close()
     return jsonify({'ok':True})
 
 @app.route('/api/friends/block', methods=['POST'])
@@ -369,10 +385,10 @@ def decline_friend():
 def block_user():
     d=request.get_json() or {}
     me=request.nickname; target=(d.get('target') or '').strip()
-    conn=get_db()
-    conn.execute('DELETE FROM friends WHERE (user1=? AND user2=?) OR (user1=? AND user2=?)',(me,target,target,me))
-    conn.execute('INSERT OR REPLACE INTO friends (user1,user2,status) VALUES (?,?,?)',(me,target,f'blocked_by_{me}'))
-    conn.commit(); conn.close()
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('DELETE FROM friends WHERE (user1=%s AND user2=%s) OR (user1=%s AND user2=%s)',(me,target,target,me))
+    cur.execute('INSERT INTO friends (user1,user2,status) VALUES (%s,%s,%s) ON CONFLICT (user1,user2) DO UPDATE SET status=%s',(me,target,f'blocked_by_{me}',f'blocked_by_{me}'))
+    conn.commit(); cur.close(); conn.close()
     sid=online.get(me)
     if sid: socketio.emit('friends_update',{},to=sid)
     return jsonify({'ok':True})
@@ -382,9 +398,9 @@ def block_user():
 def unblock_user():
     d=request.get_json() or {}
     me=request.nickname; target=(d.get('target') or '').strip()
-    conn=get_db()
-    conn.execute('DELETE FROM friends WHERE user1=? AND user2=? AND status=?',(me,target,f'blocked_by_{me}'))
-    conn.commit(); conn.close()
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('DELETE FROM friends WHERE user1=%s AND user2=%s AND status=%s',(me,target,f'blocked_by_{me}'))
+    conn.commit(); cur.close(); conn.close()
     for n in [me, target]:
         sid=online.get(n)
         if sid: socketio.emit('friends_update',{},to=sid)
@@ -395,36 +411,39 @@ def unblock_user():
 def delete_message():
     d=request.get_json() or {}
     msg_id=(d.get('id') or '').strip(); me=request.nickname; mode=d.get('mode','me')
-    conn=get_db()
-    row=conn.execute('SELECT * FROM messages WHERE id=?',(msg_id,)).fetchone()
-    if not row: conn.close(); return jsonify({'ok':False,'error':'Не найдено.'}),404
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('SELECT * FROM messages WHERE id=%s',(msg_id,))
+    row=cur.fetchone()
+    if not row: cur.close(); conn.close(); return jsonify({'ok':False,'error':'Не найдено.'}),404
     if mode=='all':
-        if row['sender']!=me: conn.close(); return jsonify({'ok':False,'error':'Нельзя удалить чужое.'}),403
-        conn.execute('UPDATE messages SET deleted_for=?,text=?,msg_type=? WHERE id=?',('__all__','🗑 Сообщение удалено','text',msg_id))
-        conn.commit(); conn.close()
+        if row['sender']!=me: cur.close(); conn.close(); return jsonify({'ok':False,'error':'Нельзя удалить чужое.'}),403
+        cur.execute('UPDATE messages SET deleted_for=%s,text=%s,msg_type=%s WHERE id=%s',('__all__','Сообщение удалено','text',msg_id))
+        conn.commit(); cur.close(); conn.close()
         for n in [row['sender'],row['receiver']]:
             sid=online.get(n)
-            if sid: socketio.emit('message_deleted',{'id':msg_id,'text':'🗑 Сообщение удалено'},to=sid)
+            if sid: socketio.emit('message_deleted',{'id':msg_id,'text':'Сообщение удалено'},to=sid)
     else:
         deleted=row['deleted_for'].split(',') if row['deleted_for'] else []
         if me not in deleted: deleted.append(me)
-        conn.execute('UPDATE messages SET deleted_for=? WHERE id=?',(','.join(deleted),msg_id))
-        conn.commit(); conn.close()
+        cur.execute('UPDATE messages SET deleted_for=%s WHERE id=%s',(','.join(deleted),msg_id))
+        conn.commit(); cur.close(); conn.close()
     return jsonify({'ok':True})
 
 @socketio.on('join')
 def on_join(data):
     nickname=(data.get('nickname') or '').strip(); token=(data.get('token') or '').strip()
     if not nickname or not token: return
-    conn=get_db()
-    row=conn.execute('SELECT nickname FROM tokens WHERE token=? AND nickname=?',(token,nickname)).fetchone()
-    conn.close()
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('SELECT nickname FROM tokens WHERE token=%s AND nickname=%s',(token,nickname))
+    row=cur.fetchone()
+    cur.close(); conn.close()
     if not row: return
     online[nickname]=request.sid
     emit('user_status',{'nickname':nickname,'online':True},broadcast=True)
-    conn=get_db()
-    rows=conn.execute('SELECT nickname,avatar_color,avatar_emoji FROM users').fetchall()
-    conn.close()
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('SELECT nickname,avatar_color,avatar_emoji FROM users')
+    rows=cur.fetchall()
+    cur.close(); conn.close()
     snap={r['nickname']:{'avatar_color':r['avatar_color'],'avatar_emoji':r['avatar_emoji']} for r in rows if r['nickname'] in online}
     emit('profiles_snapshot',snap)
 
@@ -443,18 +462,20 @@ def on_private_message(data):
     msg_type=data.get('type','text')
     caption=(data.get('caption') or '').strip()
     if not token or not sender or not receiver or not text: return
-    conn=get_db()
-    tok=conn.execute('SELECT nickname FROM tokens WHERE token=? AND nickname=?',(token,sender)).fetchone()
-    if not tok: conn.close(); return
-    if msg_type=='text' and len(text)>2000: conn.close(); return
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('SELECT nickname FROM tokens WHERE token=%s AND nickname=%s',(token,sender))
+    tok=cur.fetchone()
+    if not tok: cur.close(); conn.close(); return
+    if msg_type=='text' and len(text)>2000: cur.close(); conn.close(); return
     if caption and len(caption)>500: caption=caption[:500]
-    blocked=conn.execute('SELECT * FROM friends WHERE (user1=? AND user2=? AND status=?) OR (user1=? AND user2=? AND status=?)',
-        (sender,receiver,f'blocked_by_{sender}',receiver,sender,f'blocked_by_{receiver}')).fetchone()
-    if blocked: conn.close(); return
+    cur.execute('SELECT * FROM friends WHERE (user1=%s AND user2=%s AND status=%s) OR (user1=%s AND user2=%s AND status=%s)',
+        (sender,receiver,f'blocked_by_{sender}',receiver,sender,f'blocked_by_{receiver}'))
+    blocked=cur.fetchone()
+    if blocked: cur.close(); conn.close(); return
     msg_id=str(uuid.uuid4())[:8]; ts=int(time.time()*1000)
-    conn.execute('INSERT INTO messages (id,sender,receiver,text,msg_type,caption,time_ms,deleted_for) VALUES (?,?,?,?,?,?,?,?)',
+    cur.execute('INSERT INTO messages (id,sender,receiver,text,msg_type,caption,time_ms,deleted_for) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',
         (msg_id,sender,receiver,text,msg_type,caption,ts,''))
-    conn.commit(); conn.close()
+    conn.commit(); cur.close(); conn.close()
     out={'id':msg_id,'from':sender,'to':receiver,'text':text,'type':msg_type,'time':ts,'caption':caption}
     emit('new_message',out,to=request.sid)
     rsid=online.get(receiver)
@@ -471,6 +492,5 @@ def on_stop_typing(data):
     if rsid: emit('stop_typing',{'from':data.get('from','')},to=rsid)
 
 if __name__ == '__main__':
-    import os
     port = int(os.environ.get('PORT', 5000))
     socketio.run(app, host='0.0.0.0', port=port, debug=False)
