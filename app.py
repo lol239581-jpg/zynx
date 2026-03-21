@@ -166,8 +166,8 @@ def send_email(to, nickname, code):
         print(f"[EMAIL Exception] {type(e).__name__}: {e}")
         return False
         
-@app.route('/index.html')
-def index_html(): return send_from_directory('.', 'index.html')
+@app.route('/')
+def index(): return send_from_directory('.', 'index.html')
 
 def index(): return send_from_directory('.', 'index.html')
 
