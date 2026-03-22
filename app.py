@@ -223,7 +223,7 @@ def verify():
     if not p: return jsonify({'ok':False,'error':'Нет активного кода.'}),400
     if time.time() > p['expires_at']:
         del pending_codes[email]; return jsonify({'ok':False,'error':'Код истёк.'}),400
-    if p['code'] != code: return jsonify({'ok':False,'error':'Неверный код.'}),400
+    if p.get('code') and p['code'] != code: return jsonify({'ok':False,'error':'Неверный код.'}),400
     conn = get_db(); cur = conn.cursor()
     cur.execute('INSERT INTO users (email,nickname,password_hash,avatar_color,avatar_emoji,created_at) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (email) DO UPDATE SET nickname=EXCLUDED.nickname',
         (email,p['nickname'],p['password_hash'],random.choice(AVATAR_COLORS),random.choice(AVATAR_EMOJIS),time.time()))
