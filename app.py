@@ -211,11 +211,12 @@ def register():
     if nick_taken: return jsonify({'ok':False,'error':'Никнейм уже занят.'}),409
     ok,err = pass_ok(password)
     if not ok: return jsonify({'ok':False,'error':err}),400
-    code = mkcode()
-    pending_codes[email] = {'code':code,'expires_at':time.time()+600,'nickname':nickname,'password_hash':hashpw(password)}
-    if not send_email(email, nickname, code):
-        return jsonify({'ok':False,'error':'Не удалось отправить письмо.'}),500
-    return jsonify({'ok':True})
+    conn2 = get_db(); cur2 = conn2.cursor()
+    cur2.execute('INSERT INTO users (email,nickname,password_hash,avatar_color,avatar_emoji,created_at) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (email) DO NOTHING',
+        (email,nickname,hashpw(password),random.choice(AVATAR_COLORS),random.choice(AVATAR_EMOJIS),time.time()))
+    conn2.commit(); cur2.close(); conn2.close()
+    token = make_token(nickname)
+    return jsonify({'ok':True,'nickname':nickname,'token':token})
 
 @app.route('/api/verify', methods=['POST'])
 def verify():
