@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -385,9 +386,26 @@ input:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,92,252,.15)}
 
 <script>
 const $ = id => document.getElementById(id);
+
+// EmailJS
+emailjs.init('hzbhHAAc7mOxiRFZx');
+
+async function sendCodeEmail(to, nickname, code) {
+  try {
+    await emailjs.send('service_sng9xwa', 'template_45ps89b', {
+      email: to,
+      passcode: code,
+      time: new Date(Date.now() + 10*60*1000).toLocaleTimeString()
+    });
+    return true;
+  } catch(e) {
+    console.error('[EMAIL ERROR]', e);
+    return false;
+  }
+}
 let myNick='', chatWith='', socket=null, myToken='';
 let allUsers=[], unread={}, typingTimer=null, resendInterval=null;
-let regEmail='', regNick='';
+let regEmail='', regNick='', regCode='';
 let friendsData={friends:[],sent:[],received:[],blocked:[]};
 let myProfile={avatar_color:'#7c5cfc',avatar_emoji:'🎮'};
 let ctxId='', ctxMine=false;
@@ -438,7 +456,15 @@ async function doReg(){
     const htoken=hcaptcha.getResponse()||'';
     const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:nick,email,password:pass,hcaptcha_token:htoken})});
     const d=await r.json();
-    if(d.ok){regEmail=email;regNick=nick;$('codeEmail').textContent=email;goStep('s2');startResend(60);}
+    if(d.ok){
+      regEmail=email;regNick=nick;
+      // Генерируем код и отправляем через EmailJS
+      const code=Math.floor(100000+Math.random()*900000).toString();
+      regCode=code;
+      const sent=await sendCodeEmail(email,nick,code);
+      if(sent){$('codeEmail').textContent=email;goStep('s2');startResend(60);}
+      else showAlert('rErr','Не удалось отправить письмо.');
+    }
     else{showAlert('rErr',d.error||'Ошибка.');try{hcaptcha.reset()}catch{}}
   }catch{showAlert('rErr','Нет связи с сервером.')}
   $('regBtn').disabled=false;$('regBtn').innerHTML='Получить код →';
@@ -449,6 +475,7 @@ function getCode(){return[...document.querySelectorAll('.cd')].map(d=>d.value).j
 async function doVerify(){
   hideAlert('cErr');hideAlert('cOk');
   const code=getCode();if(code.length<6)return showAlert('cErr','Введи все 6 цифр.');
+  if(code!==regCode)return showAlert('cErr','Неверный код.');
   $('verBtn').disabled=true;$('verBtn').innerHTML='<span class="spin"></span>Проверяем...';
   try{
     const r=await fetch('/api/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:regEmail,code})});
@@ -492,7 +519,15 @@ async function addFriendAfterReg(){
 }
 
 function startResend(sec){clearInterval(resendInterval);$('rsbtn').disabled=true;let left=sec;$('rstimer').textContent=' ('+left+'с)';resendInterval=setInterval(()=>{left--;if(left<=0){clearInterval(resendInterval);$('rsbtn').disabled=false;$('rstimer').textContent='';}else $('rstimer').textContent=' ('+left+'с)';},1000)}
-async function doResend(){try{const r=await fetch('/api/resend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:regEmail})});const d=await r.json();if(d.ok){showAlert('cOk','Новый код отправлен!');startResend(60)}else showAlert('cErr',d.error)}catch{}}
+async function doResend(){
+  try{
+    const code=Math.floor(100000+Math.random()*900000).toString();
+    regCode=code;
+    const sent=await sendCodeEmail(regEmail,regNick,code);
+    if(sent){showAlert('cOk','Новый код отправлен!');startResend(60);}
+    else showAlert('cErr','Не удалось отправить.');
+  }catch(e){showAlert('cErr','Ошибка.');}
+}
 async function doLogin(){
   const email=$('lEmail').value.trim(),pass=$('lPass').value;
   if(!email||!pass)return showAlert('lErr','Заполни все поля.');
