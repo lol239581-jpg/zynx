@@ -340,7 +340,7 @@ def get_messages():
                 'type': r['msg_type'] or 'text',
                 'caption': r['caption'] or '',
                 'time': int(r['time_ms']),
-                'edited': bool(r['edited']),
+                'edited': bool(r.get('edited', False)),
                 'reactions': reactions_map.get(r['id'], {})
             })
         return jsonify({'ok':True,'messages':msgs})
