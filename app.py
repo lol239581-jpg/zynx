@@ -319,18 +319,15 @@ def get_messages():
     conn = get_db(); cur = conn.cursor()
     cur.execute('SELECT * FROM messages WHERE (sender=%s AND receiver=%s) OR (sender=%s AND receiver=%s) ORDER BY time_ms ASC',(me,other,other,me))
     rows = cur.fetchall()
-    cur.close(); conn.close()
-    # загружаем все реакции для этих сообщений одним запросом
+    # загружаем все реакции одним запросом пока соединение ещё открыто
     msg_ids = [r['id'] for r in rows]
     reactions_map = {}
     if msg_ids:
-        cur2 = conn.cursor()
         placeholders = ','.join(['%s']*len(msg_ids))
-        cur2.execute(f'SELECT msg_id, emoji, nickname FROM reactions WHERE msg_id IN ({placeholders})', msg_ids)
-        for rx in cur2.fetchall():
+        cur.execute(f'SELECT msg_id, emoji, nickname FROM reactions WHERE msg_id IN ({placeholders})', msg_ids)
+        for rx in cur.fetchall():
             reactions_map.setdefault(rx['msg_id'], {}).setdefault(rx['emoji'], []).append(rx['nickname'])
-        cur2.close()
-    conn.close()
+    cur.close(); conn.close()
     msgs = []
     for r in rows:
         deleted_for = r['deleted_for'].split(',') if r['deleted_for'] else []
