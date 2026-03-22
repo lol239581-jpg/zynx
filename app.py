@@ -320,20 +320,22 @@ def get_messages():
     cur.execute('SELECT * FROM messages WHERE (sender=%s AND receiver=%s) OR (sender=%s AND receiver=%s) ORDER BY time_ms ASC',(me,other,other,me))
     rows = cur.fetchall()
     cur.close(); conn.close()
+    # загружаем все реакции для этих сообщений одним запросом
+    msg_ids = [r['id'] for r in rows]
+    reactions_map = {}
+    if msg_ids:
+        cur2 = conn.cursor()
+        placeholders = ','.join(['%s']*len(msg_ids))
+        cur2.execute(f'SELECT msg_id, emoji, nickname FROM reactions WHERE msg_id IN ({placeholders})', msg_ids)
+        for rx in cur2.fetchall():
+            reactions_map.setdefault(rx['msg_id'], {}).setdefault(rx['emoji'], []).append(rx['nickname'])
+        cur2.close()
+    conn.close()
     msgs = []
     for r in rows:
         deleted_for = r['deleted_for'].split(',') if r['deleted_for'] else []
         if me in deleted_for or '__all__' in deleted_for: continue
-        # Получаем реакции для сообщения
-        cur2 = conn.cursor()
-        cur2.execute('SELECT emoji, nickname FROM reactions WHERE msg_id=%s', (r['id'],))
-        rxs = cur2.fetchall()
-        cur2.close()
-        reactions = {}
-        for rx in rxs:
-            reactions[rx['emoji']] = reactions.get(rx['emoji'], [])
-            reactions[rx['emoji']].append(rx['nickname'])
-        msgs.append({'id':r['id'],'from':r['sender'],'to':r['receiver'],'text':r['text'],'type':r['msg_type'],'caption':r['caption'] or '','time':r['time_ms'],'edited':r['edited'] or False,'reactions':reactions})
+        msgs.append({'id':r['id'],'from':r['sender'],'to':r['receiver'],'text':r['text'],'type':r['msg_type'],'caption':r['caption'] or '','time':r['time_ms'],'edited':r['edited'] or False,'reactions':reactions_map.get(r['id'],{})})
     return jsonify({'ok':True,'messages':msgs})
 
 @app.route('/api/friends', methods=['GET'])
