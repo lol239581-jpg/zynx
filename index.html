@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://js.hcaptcha.com/1/api.js" async defer></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -255,6 +256,7 @@ input:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,92,252,.15)}
         <div class="pw-rules"><span class="pwr" id="p-len">8–50 симв.</span><span class="pwr" id="p-up">Заглавная</span><span class="pwr" id="p-dig">Цифра</span><span class="pwr" id="p-sp">Символ !</span></div>
       </div>
       <div class="field"><label>Повтори пароль</label><input type="password" id="rPass2" placeholder="••••••••" maxlength="50"/></div>
+      <div class="h-captcha" data-sitekey="e9ca7716-2fcc-4bbe-964c-03aa7a1a3f82" data-theme="dark" style="margin-bottom:10px"></div>
       <button class="btn" id="regBtn" onclick="doReg()">Получить код →</button>
     </div>
     <div class="step" id="s2">
@@ -433,10 +435,11 @@ async function doReg(){
   if(pass!==pass2)return showAlert('rErr','Пароли не совпадают.');
   $('regBtn').disabled=true;$('regBtn').innerHTML='<span class="spin"></span>Отправляем...';
   try{
-    const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:nick,email,password:pass})});
+    const htoken=hcaptcha.getResponse()||'';
+    const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nickname:nick,email,password:pass,hcaptcha_token:htoken})});
     const d=await r.json();
     if(d.ok){regEmail=email;regNick=nick;$('codeEmail').textContent=email;goStep('s2');startResend(60);}
-    else showAlert('rErr',d.error||'Ошибка.');
+    else{showAlert('rErr',d.error||'Ошибка.');try{hcaptcha.reset()}catch{}}
   }catch{showAlert('rErr','Нет связи с сервером.')}
   $('regBtn').disabled=false;$('regBtn').innerHTML='Получить код →';
 }
