@@ -313,27 +313,41 @@ def update_profile():
 @app.route('/api/messages', methods=['GET'])
 @require_auth
 def get_messages():
-    other = (request.args.get('with') or '').strip()
-    me = request.nickname
-    if not other: return jsonify({'ok':False}),400
-    conn = get_db(); cur = conn.cursor()
-    cur.execute('SELECT * FROM messages WHERE (sender=%s AND receiver=%s) OR (sender=%s AND receiver=%s) ORDER BY time_ms ASC',(me,other,other,me))
-    rows = cur.fetchall()
-    # загружаем все реакции одним запросом пока соединение ещё открыто
-    msg_ids = [r['id'] for r in rows]
-    reactions_map = {}
-    if msg_ids:
-        placeholders = ','.join(['%s']*len(msg_ids))
-        cur.execute(f'SELECT msg_id, emoji, nickname FROM reactions WHERE msg_id IN ({placeholders})', msg_ids)
-        for rx in cur.fetchall():
-            reactions_map.setdefault(rx['msg_id'], {}).setdefault(rx['emoji'], []).append(rx['nickname'])
-    cur.close(); conn.close()
-    msgs = []
-    for r in rows:
-        deleted_for = r['deleted_for'].split(',') if r['deleted_for'] else []
-        if me in deleted_for or '__all__' in deleted_for: continue
-        msgs.append({'id':r['id'],'from':r['sender'],'to':r['receiver'],'text':r['text'],'type':r['msg_type'],'caption':r['caption'] or '','time':r['time_ms'],'edited':r['edited'] or False,'reactions':reactions_map.get(r['id'],{})})
-    return jsonify({'ok':True,'messages':msgs})
+    try:
+        other = (request.args.get('with') or '').strip()
+        me = request.nickname
+        if not other: return jsonify({'ok':False}),400
+        conn = get_db(); cur = conn.cursor()
+        cur.execute('SELECT * FROM messages WHERE (sender=%s AND receiver=%s) OR (sender=%s AND receiver=%s) ORDER BY time_ms ASC',(me,other,other,me))
+        rows = cur.fetchall()
+        msg_ids = [r['id'] for r in rows]
+        reactions_map = {}
+        if msg_ids:
+            placeholders = ','.join(['%s']*len(msg_ids))
+            cur.execute('SELECT msg_id, emoji, nickname FROM reactions WHERE msg_id IN ('+placeholders+')', msg_ids)
+            for rx in cur.fetchall():
+                reactions_map.setdefault(rx['msg_id'], {}).setdefault(rx['emoji'], []).append(rx['nickname'])
+        cur.close(); conn.close()
+        msgs = []
+        for r in rows:
+            deleted_for = r['deleted_for'].split(',') if r['deleted_for'] else []
+            if me in deleted_for or '__all__' in deleted_for: continue
+            msgs.append({
+                'id': r['id'],
+                'from': r['sender'],
+                'to': r['receiver'],
+                'text': r['text'],
+                'type': r['msg_type'] or 'text',
+                'caption': r['caption'] or '',
+                'time': int(r['time_ms']),
+                'edited': bool(r['edited']),
+                'reactions': reactions_map.get(r['id'], {})
+            })
+        return jsonify({'ok':True,'messages':msgs})
+    except Exception as e:
+        import traceback
+        print('[GET_MESSAGES ERROR]', traceback.format_exc())
+        return jsonify({'ok':False,'error':str(e)}),500
 
 @app.route('/api/friends', methods=['GET'])
 @require_auth
