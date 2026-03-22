@@ -227,6 +227,9 @@ input:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,92,252,.15)}
 .copt:hover{transform:scale(1.15)}.copt.sel{border-color:#fff}
 
 /* REACTIONS */
+.msg-block{display:flex;flex-direction:column;}
+.mg.mine .msg-block{align-items:flex-end;}
+.mg.theirs .msg-block{align-items:flex-start;}
 .reactions{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
 .reaction{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:2px 7px;font-size:12px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:3px}
 .reaction:hover{background:rgba(124,92,252,.2);border-color:var(--a1)}
@@ -877,7 +880,7 @@ function appendMsg(msg){
   const isMine=msg.from===myNick;
   const msgs=$('messages');
   let lg=msgs.querySelector('.mg:last-child');
-  const same=lg&&lg.classList.contains(isMine?'mine':'theirs')&&lg.dataset.from===msg.from;
+  const same=lg&&lg.classList.contains(isMine?'mine':'theirs')&&lg.dataset.from===msg.from&&lg.dataset.from!==undefined;
   if(!same){
     lg=document.createElement('div');lg.className='mg '+(isMine?'mine':'theirs');lg.dataset.from=msg.from;
     if(!isMine){const s=document.createElement('div');s.className='msender';s.textContent=msg.from;lg.appendChild(s)}
@@ -894,22 +897,24 @@ function appendMsg(msg){
     img.onclick=e=>{e.stopPropagation();$('viewerImg').src=msg.text;$('viewer').classList.add('show')};
     b.appendChild(img);
   }else{b.textContent=msg.text}
+  // long press for mobile
+  let touchTimer=null;
+  b.addEventListener('touchstart',e=>{touchTimer=setTimeout(()=>{e.preventDefault();showCtx(e.touches[0],msg.id,isMine,!isImg&&!isDel)},500)},{passive:false});
+  b.addEventListener('touchend',()=>clearTimeout(touchTimer));
+  b.addEventListener('touchmove',()=>clearTimeout(touchTimer));
   b.addEventListener('contextmenu',e=>{e.preventDefault();showCtx(e,msg.id,isMine,!isImg&&!isDel)});
   b.addEventListener('click',e=>{if(e.detail===2&&!isImg)showCtx(e,msg.id,isMine,!isImg&&!isDel)});
   // edited mark
   if(msg.edited){const em=document.createElement('span');em.className='edited-mark';em.textContent='ред.';b.appendChild(em);}
   wrap.appendChild(b);
   const t=document.createElement('div');t.className='mtime';t.textContent=fmt(msg.time);wrap.appendChild(t);
-  lg.appendChild(wrap);
-  // reactions
-  if(msg.reactions&&Object.keys(msg.reactions).length>0){
-    const rx=document.createElement('div');rx.className='reactions';rx.dataset.msgId=msg.id;rx.setAttribute("data-msg-id",msg.id);
-    renderReactions(rx,msg.reactions,msg.id);
-    lg.appendChild(rx);
-  } else {
-    const rx=document.createElement('div');rx.className='reactions';rx.dataset.msgId=msg.id;rx.setAttribute("data-msg-id",msg.id);
-    lg.appendChild(rx);
-  }
+  // reactions — кладём в отдельный div ПОСЛЕ wrap, но привязываем к сообщению через data-msg-id
+  const rx=document.createElement('div');rx.className='reactions';rx.dataset.msgId=msg.id;rx.setAttribute('data-msg-id',msg.id);
+  if(msg.reactions&&Object.keys(msg.reactions).length>0){renderReactions(rx,msg.reactions,msg.id);}
+  const msgBlock=document.createElement('div');msgBlock.className='msg-block';msgBlock.dataset.blockId=msg.id;
+  msgBlock.appendChild(wrap);
+  msgBlock.appendChild(rx);
+  lg.appendChild(msgBlock);
 }
 function scrollBot(){const m=$('messages');m.scrollTop=m.scrollHeight}
 
@@ -1000,7 +1005,7 @@ function startEdit(){
   const b=document.querySelector('[data-id="'+ctxId+'"]');
   if(!b)return;
   const oldText=b.childNodes[0]?.textContent||b.textContent;
-  const wrap=b.closest('.mwrap');
+  const wrap=b.closest('.msg-block');
   // Убираем старый edit area если есть
   wrap.querySelectorAll('.edit-area').forEach(e=>e.remove());
   const ea=document.createElement('div');ea.className='edit-area show';
@@ -1068,12 +1073,13 @@ function initSocketExtras(){
   socket.on('message_edited',data=>{
     const b=document.querySelector('[data-id="'+data.id+'"]');
     if(b){
-      b.childNodes[0].textContent=data.text;
-      if(!b.querySelector('.edited-mark')){
-        const em=document.createElement('span');em.className='edited-mark';em.textContent='ред.';b.appendChild(em);
-      }
-      // Убираем edit area если открыт
-      b.closest('.mwrap')?.querySelector('.edit-area')?.remove();
+      // убираем edited-mark если есть, потом ставим заново
+      b.querySelector('.edited-mark')?.remove();
+      // первый текстовый узел
+      const tn=[...b.childNodes].find(n=>n.nodeType===3);
+      if(tn)tn.textContent=data.text; else b.prepend(document.createTextNode(data.text));
+      const em=document.createElement('span');em.className='edited-mark';em.textContent='ред.';b.appendChild(em);
+      b.closest('.msg-block')?.querySelector('.edit-area')?.remove();
     }
   });
   socket.on('reaction_updated',data=>{
