@@ -212,7 +212,7 @@ def register():
     ok,err = pass_ok(password)
     if not ok: return jsonify({'ok':False,'error':err}),400
     pending_codes[email] = {'expires_at':time.time()+600,'nickname':nickname,'password_hash':hashpw(password)}
-return jsonify({'ok':True})
+    return jsonify({'ok':True})
 
 @app.route('/api/verify', methods=['POST'])
 def verify():
