@@ -67,7 +67,15 @@ def init_db():
             msg_type TEXT DEFAULT 'text',
             caption TEXT DEFAULT '',
             time_ms BIGINT NOT NULL,
-            deleted_for TEXT DEFAULT ''
+            deleted_for TEXT DEFAULT '',
+            edited BOOLEAN DEFAULT FALSE,
+            reactions TEXT DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS reactions (
+            msg_id TEXT NOT NULL,
+            nickname TEXT NOT NULL,
+            emoji TEXT NOT NULL,
+            PRIMARY KEY (msg_id, nickname)
         );
     ''')
     conn.commit()
@@ -316,7 +324,16 @@ def get_messages():
     for r in rows:
         deleted_for = r['deleted_for'].split(',') if r['deleted_for'] else []
         if me in deleted_for or '__all__' in deleted_for: continue
-        msgs.append({'id':r['id'],'from':r['sender'],'to':r['receiver'],'text':r['text'],'type':r['msg_type'],'caption':r['caption'] or '','time':r['time_ms']})
+        # Получаем реакции для сообщения
+        cur2 = conn.cursor()
+        cur2.execute('SELECT emoji, nickname FROM reactions WHERE msg_id=%s', (r['id'],))
+        rxs = cur2.fetchall()
+        cur2.close()
+        reactions = {}
+        for rx in rxs:
+            reactions[rx['emoji']] = reactions.get(rx['emoji'], [])
+            reactions[rx['emoji']].append(rx['nickname'])
+        msgs.append({'id':r['id'],'from':r['sender'],'to':r['receiver'],'text':r['text'],'type':r['msg_type'],'caption':r['caption'] or '','time':r['time_ms'],'edited':r['edited'] or False,'reactions':reactions})
     return jsonify({'ok':True,'messages':msgs})
 
 @app.route('/api/friends', methods=['GET'])
@@ -419,6 +436,61 @@ def unblock_user():
         sid=online.get(n)
         if sid: socketio.emit('friends_update',{},to=sid)
     return jsonify({'ok':True})
+
+@app.route('/api/messages/edit', methods=['POST'])
+@require_auth
+def edit_message():
+    d=request.get_json() or {}
+    msg_id=(d.get('id') or '').strip()
+    new_text=(d.get('text') or '').strip()
+    me=request.nickname
+    if not msg_id or not new_text: return jsonify({'ok':False,'error':'Нет данных.'}),400
+    if len(new_text)>2000: return jsonify({'ok':False,'error':'Слишком длинно.'}),400
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('SELECT * FROM messages WHERE id=%s',(msg_id,))
+    row=cur.fetchone()
+    if not row: cur.close(); conn.close(); return jsonify({'ok':False,'error':'Не найдено.'}),404
+    if row['sender']!=me: cur.close(); conn.close(); return jsonify({'ok':False,'error':'Нельзя редактировать чужое.'}),403
+    if row['msg_type']!='text': cur.close(); conn.close(); return jsonify({'ok':False,'error':'Только текст.'}),400
+    cur.execute('UPDATE messages SET text=%s, edited=TRUE WHERE id=%s',(new_text,msg_id))
+    conn.commit(); cur.close(); conn.close()
+    for n in [row['sender'],row['receiver']]:
+        sid=online.get(n)
+        if sid: socketio.emit('message_edited',{'id':msg_id,'text':new_text},to=sid)
+    return jsonify({'ok':True})
+
+@app.route('/api/messages/react', methods=['POST'])
+@require_auth
+def react_message():
+    d=request.get_json() or {}
+    msg_id=(d.get('id') or '').strip()
+    emoji=(d.get('emoji') or '').strip()
+    me=request.nickname
+    if not msg_id or not emoji: return jsonify({'ok':False,'error':'Нет данных.'}),400
+    conn=get_db(); cur=conn.cursor()
+    cur.execute('SELECT * FROM messages WHERE id=%s',(msg_id,))
+    row=cur.fetchone()
+    if not row: cur.close(); conn.close(); return jsonify({'ok':False,'error':'Не найдено.'}),404
+    # Если уже поставил эту реакцию — убираем
+    cur.execute('SELECT * FROM reactions WHERE msg_id=%s AND nickname=%s',(msg_id,me))
+    existing=cur.fetchone()
+    if existing and existing['emoji']==emoji:
+        cur.execute('DELETE FROM reactions WHERE msg_id=%s AND nickname=%s',(msg_id,me))
+    else:
+        cur.execute('INSERT INTO reactions (msg_id,nickname,emoji) VALUES (%s,%s,%s) ON CONFLICT (msg_id,nickname) DO UPDATE SET emoji=%s',(msg_id,me,emoji,emoji))
+    conn.commit()
+    # Получаем обновлённые реакции
+    cur.execute('SELECT emoji, nickname FROM reactions WHERE msg_id=%s',(msg_id,))
+    rxs=cur.fetchall()
+    cur.close(); conn.close()
+    reactions={}
+    for rx in rxs:
+        reactions[rx['emoji']]=reactions.get(rx['emoji'],[])
+        reactions[rx['emoji']].append(rx['nickname'])
+    for n in [row['sender'],row['receiver']]:
+        sid=online.get(n)
+        if sid: socketio.emit('reaction_updated',{'id':msg_id,'reactions':reactions},to=sid)
+    return jsonify({'ok':True,'reactions':reactions})
 
 @app.route('/api/messages/delete', methods=['POST'])
 @require_auth
