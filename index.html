@@ -226,6 +226,24 @@ input:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,92,252,.15)}
 .copt{width:28px;height:28px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:all .15s}
 .copt:hover{transform:scale(1.15)}.copt.sel{border-color:#fff}
 
+/* REACTIONS */
+.reactions{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.reaction{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:2px 7px;font-size:12px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:3px}
+.reaction:hover{background:rgba(124,92,252,.2);border-color:var(--a1)}
+.reaction.mine{background:rgba(124,92,252,.2);border-color:var(--a1)}
+.reaction-count{font-size:11px;color:var(--muted)}
+.edited-mark{font-size:10px;color:var(--muted);opacity:.6;margin-left:4px;font-style:italic}
+/* EMOJI PICKER */
+.emoji-picker{position:fixed;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:8px;z-index:200;box-shadow:0 8px 32px rgba(0,0,0,.5);display:flex;flex-wrap:wrap;gap:4px;width:220px;animation:up .15s ease}
+.emoji-opt{width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;border-radius:6px;transition:background .1s}
+.emoji-opt:hover{background:rgba(255,255,255,.1)}
+/* EDIT INPUT */
+.edit-area{display:none;margin-top:4px}
+.edit-area.show{display:flex;gap:6px}
+.edit-input{flex:1;padding:6px 10px;background:var(--s);border:1px solid var(--a1);border-radius:8px;color:var(--text);font-family:'Syne',sans-serif;font-size:13px;outline:none}
+.edit-save{padding:6px 12px;background:var(--ag);border:none;border-radius:8px;color:#fff;font-family:'Syne',sans-serif;font-size:12px;font-weight:700;cursor:pointer}
+.edit-cancel{padding:6px 12px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-family:'Syne',sans-serif;font-size:12px;cursor:pointer}
+
 /* VIEWER */
 .viewer{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:300;display:none;align-items:center;justify-content:center;cursor:zoom-out}
 .viewer.show{display:flex}
@@ -366,6 +384,8 @@ input:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,92,252,.15)}
 
 <!-- CTX -->
 <div class="ctx" id="ctx" style="display:none">
+  <div class="ctx-item" id="ctxEdit" onclick="startEdit()">✏️ Редактировать</div>
+  <div class="ctx-item" onclick="showEmojiPicker(event)">😊 Реакция</div>
   <div class="ctx-item d" onclick="delMsg('me')">🗑 Удалить у себя</div>
   <div class="ctx-item d" id="ctxAll" onclick="delMsg('all')">🗑 Удалить у всех</div>
 </div>
@@ -704,6 +724,7 @@ function initSocket(){
   socket.on('stop_typing',data=>{if(data.from===chatWith)$('typingInd').classList.remove('show')});
   socket.on('friend_request',data=>{showToast(data.from+' хочет дружить!','👥');loadFriends();});
   socket.on('friends_update',()=>loadFriends());
+  initSocketExtras();
   // Переподключение при разрыве
   socket.on('disconnect',()=>{
     if(myNick) setTimeout(()=>{if(!socket.connected)initSocket();},3000);
@@ -873,11 +894,22 @@ function appendMsg(msg){
     img.onclick=e=>{e.stopPropagation();$('viewerImg').src=msg.text;$('viewer').classList.add('show')};
     b.appendChild(img);
   }else{b.textContent=msg.text}
-  b.addEventListener('contextmenu',e=>{e.preventDefault();showCtx(e,msg.id,isMine)});
-  b.addEventListener('click',e=>{if(e.detail===2&&!isImg)showCtx(e,msg.id,isMine)});
+  b.addEventListener('contextmenu',e=>{e.preventDefault();showCtx(e,msg.id,isMine,!isImg&&!isDel)});
+  b.addEventListener('click',e=>{if(e.detail===2&&!isImg)showCtx(e,msg.id,isMine,!isImg&&!isDel)});
+  // edited mark
+  if(msg.edited){const em=document.createElement('span');em.className='edited-mark';em.textContent='ред.';b.appendChild(em);}
   wrap.appendChild(b);
   const t=document.createElement('div');t.className='mtime';t.textContent=fmt(msg.time);wrap.appendChild(t);
   lg.appendChild(wrap);
+  // reactions
+  if(msg.reactions&&Object.keys(msg.reactions).length>0){
+    const rx=document.createElement('div');rx.className='reactions';rx.dataset.msgId=msg.id;rx.setAttribute("data-msg-id",msg.id);
+    renderReactions(rx,msg.reactions,msg.id);
+    lg.appendChild(rx);
+  } else {
+    const rx=document.createElement('div');rx.className='reactions';rx.dataset.msgId=msg.id;rx.setAttribute("data-msg-id",msg.id);
+    lg.appendChild(rx);
+  }
 }
 function scrollBot(){const m=$('messages');m.scrollTop=m.scrollHeight}
 
@@ -889,9 +921,10 @@ function sendImg(inp){
   reader.readAsDataURL(file);inp.value='';
 }
 
-function showCtx(e,id,isMine){
+function showCtx(e,id,isMine,isText){
   ctxId=id;ctxMine=isMine;
   $('ctxAll').style.display=isMine?'flex':'none';
+  $('ctxEdit').style.display=(isMine&&isText)?'flex':'none';
   const m=$('ctx');m.style.display='block';
   let x=e.clientX,y=e.clientY;
   if(x+180>window.innerWidth)x=window.innerWidth-190;
@@ -960,6 +993,94 @@ window.addEventListener('resize',()=>{
     document.querySelector('.chat-main')?.classList.remove('hidden');
   }
 });
+
+// ── РЕДАКТИРОВАНИЕ ──────────────────────────────────────────────────────────
+function startEdit(){
+  $('ctx').style.display='none';
+  const b=document.querySelector('[data-id="'+ctxId+'"]');
+  if(!b)return;
+  const oldText=b.childNodes[0]?.textContent||b.textContent;
+  const wrap=b.closest('.mwrap');
+  // Убираем старый edit area если есть
+  wrap.querySelectorAll('.edit-area').forEach(e=>e.remove());
+  const ea=document.createElement('div');ea.className='edit-area show';
+  const inp=document.createElement('input');inp.className='edit-input';inp.value=oldText;
+  const save=document.createElement('button');save.className='edit-save';save.textContent='Сохранить';
+  const cancel=document.createElement('button');cancel.className='edit-cancel';cancel.textContent='Отмена';
+  save.onclick=async()=>{
+    const newText=inp.value.trim();if(!newText)return;
+    const r=await authFetch('/api/messages/edit',{method:'POST',body:JSON.stringify({id:ctxId,text:newText})});
+    const d=await r.json();
+    if(d.ok){ea.remove();}else showToast(d.error||'Ошибка');
+  };
+  cancel.onclick=()=>ea.remove();
+  inp.onkeydown=e=>{if(e.key==='Enter')save.onclick();if(e.key==='Escape')cancel.onclick();};
+  ea.appendChild(inp);ea.appendChild(save);ea.appendChild(cancel);
+  wrap.appendChild(ea);
+  inp.focus();inp.select();
+}
+
+// ── РЕАКЦИИ ─────────────────────────────────────────────────────────────────
+const REACTION_EMOJIS=['❤️','😂','😮','😢','😡','👍','👎','🔥','🎉','💯'];
+let emojiPickerMsgId='';
+
+function showEmojiPicker(e){
+  $('ctx').style.display='none';
+  emojiPickerMsgId=ctxId;
+  document.querySelector('.emoji-picker')?.remove();
+  const picker=document.createElement('div');picker.className='emoji-picker';
+  REACTION_EMOJIS.forEach(em=>{
+    const opt=document.createElement('div');opt.className='emoji-opt';opt.textContent=em;
+    opt.onclick=()=>{addReaction(emojiPickerMsgId,em);picker.remove();};
+    picker.appendChild(opt);
+  });
+  document.body.appendChild(picker);
+  let x=e.clientX,y=e.clientY;
+  if(x+230>window.innerWidth)x=window.innerWidth-240;
+  if(y+120>window.innerHeight)y=window.innerHeight-130;
+  picker.style.left=x+'px';picker.style.top=y+'px';
+  setTimeout(()=>document.addEventListener('click',()=>picker.remove(),{once:true}),100);
+}
+
+async function addReaction(msgId,emoji){
+  try{
+    const r=await authFetch('/api/messages/react',{method:'POST',body:JSON.stringify({id:msgId,emoji})});
+    const d=await r.json();
+    if(!d.ok)showToast(d.error||'Ошибка');
+  }catch{}
+}
+
+function renderReactions(container,reactions,msgId){
+  container.innerHTML='';
+  Object.entries(reactions).forEach(([emoji,users])=>{
+    if(!users.length)return;
+    const r=document.createElement('div');
+    r.className='reaction'+(users.includes(myNick)?' mine':'');
+    r.title=users.join(', ');
+    r.innerHTML=emoji+'<span class="reaction-count">'+users.length+'</span>';
+    r.onclick=()=>addReaction(msgId,emoji);
+    container.appendChild(r);
+  });
+}
+
+// Socket события для редактирования и реакций
+function initSocketExtras(){
+  socket.on('message_edited',data=>{
+    const b=document.querySelector('[data-id="'+data.id+'"]');
+    if(b){
+      b.childNodes[0].textContent=data.text;
+      if(!b.querySelector('.edited-mark')){
+        const em=document.createElement('span');em.className='edited-mark';em.textContent='ред.';b.appendChild(em);
+      }
+      // Убираем edit area если открыт
+      b.closest('.mwrap')?.querySelector('.edit-area')?.remove();
+    }
+  });
+  socket.on('reaction_updated',data=>{
+    const container=document.querySelector('.reactions[data-msg-id="'+data.id+'"]');
+    if(container)renderReactions(container,data.reactions,data.id);
+  });
+}
 </script>
 </body>
 </html>
