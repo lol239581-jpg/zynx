@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
-import random, string, re, os, time, hashlib, uuid, urllib.request, urllib.error
+import random, string, re, os, time, hashlib, uuid, urllib.request, urllib.error, urllib.parse
 import json as _json
 from functools import wraps
 import psycopg2
@@ -135,18 +135,29 @@ def get_profile(nick):
 
 def send_email(to, nickname, code):
     api_key = os.environ.get('RESEND_API_KEY', '')
-    print(f"[EMAIL] Начало отправки на {to}, api_key={'ЕСТЬ' if api_key else 'НЕТ'}")
     if not api_key:
         print("[EMAIL ERROR] RESEND_API_KEY не задан")
         return False
-    html = f"<p>Код: <b>{code}</b></p>"
+    html = f"""<html><body style="background:#07070e;font-family:sans-serif;padding:40px 20px;">
+<div style="max-width:460px;margin:0 auto;background:#141420;border-radius:16px;border:1px solid #252535;overflow:hidden;">
+  <div style="background:linear-gradient(135deg,#7c5cfc,#fc5cbc);padding:28px;text-align:center;">
+    <h1 style="color:#fff;margin:0;letter-spacing:3px;font-size:24px;">ZYNX</h1>
+  </div>
+  <div style="padding:32px;">
+    <p style="color:#c0c0d0;">Привет, <b style="color:#fff">{nickname}</b>!</p>
+    <p style="color:#888;">Твой код подтверждения:</p>
+    <div style="background:#1e1e2e;border:2px solid #7c5cfc;border-radius:12px;padding:22px;text-align:center;margin:20px 0;">
+      <span style="font-size:40px;font-weight:900;letter-spacing:14px;color:#a78bfa;font-family:monospace;">{code}</span>
+    </div>
+    <p style="color:#666;font-size:12px;">Код действует 10 минут.</p>
+  </div>
+</div></body></html>"""
     payload = _json.dumps({
-        "from": "onboarding@resend.dev",
+        "from": "Zynx <onboarding@resend.dev>",
         "to": [to],
-        "subject": f"Zynx код: {code}",
+        "subject": f"Zynx — код подтверждения: {code}",
         "html": html
     }).encode('utf-8')
-    print(f"[EMAIL] Payload готов, отправляю запрос...")
     try:
         req = urllib.request.Request(
             'https://api.resend.com/emails',
@@ -155,21 +166,28 @@ def send_email(to, nickname, code):
             method='POST'
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
-            body = resp.read().decode()
-            print(f"[EMAIL OK] статус={resp.status} тело={body}")
+            print(f"[EMAIL OK] -> {to} ({resp.status})")
             return True
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        print(f"[EMAIL HTTPError] код={e.code} тело={body}")
-        return False
     except Exception as e:
-        print(f"[EMAIL Exception] {type(e).__name__}: {e}")
+        print(f"[EMAIL ERROR] {e}")
         return False
-        
+
 @app.route('/')
 def index(): return send_from_directory('.', 'index.html')
 
-def index(): return send_from_directory('.', 'index.html')
+def verify_hcaptcha(token):
+    secret = os.environ.get('HCAPTCHA_SECRET', '')
+    if not secret:
+        return True  # если ключ не задан — пропускаем
+    try:
+        data = urllib.parse.urlencode({'secret': secret, 'response': token}).encode()
+        req = urllib.request.Request('https://hcaptcha.com/siteverify', data=data)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = _json.loads(resp.read())
+            return result.get('success', False)
+    except Exception as e:
+        print(f"[HCAPTCHA ERROR] {e}")
+        return False
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -177,6 +195,9 @@ def register():
     email    = (d.get('email') or '').strip().lower()
     nickname = (d.get('nickname') or '').strip()
     password =  d.get('password') or ''
+    hcaptcha_token = d.get('hcaptcha_token') or ''
+    if not verify_hcaptcha(hcaptcha_token):
+        return jsonify({'ok':False,'error':'Капча не пройдена. Попробуй снова.'}),400
     if not email_ok(email): return jsonify({'ok':False,'error':'Неверный формат email.'}),400
     conn = get_db(); cur = conn.cursor()
     cur.execute('SELECT email FROM users WHERE email=%s', (email,))
