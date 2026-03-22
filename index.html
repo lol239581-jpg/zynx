@@ -708,6 +708,8 @@ function initSocket(){
     if(data.nickname===chatWith)updateChHeader();
   });
   socket.on('new_message',msg=>{
+    // если чат открыт но пустой (например после переподключения) — перезагружаем
+    if((msg.from===chatWith||msg.to===chatWith)&&$('messages').children.length===0){loadMessages(chatWith);return;}
     if((msg.from===chatWith&&msg.to===myNick)||(msg.from===myNick&&msg.to===chatWith)){
       appendMsg(msg);scrollBot();
     }else if(msg.from!==myNick){
@@ -859,21 +861,36 @@ async function addFriend(){
 async function acceptFriend(n){await authFetch('/api/friends/accept',{method:'POST',body:JSON.stringify({from:n})});showToast(n+' теперь твой друг!','✅');loadFriends()}
 async function declineFriend(n){await authFetch('/api/friends/decline',{method:'POST',body:JSON.stringify({from:n})});loadFriends()}
 async function blockFriend(n){if(!confirm('Заблокировать '+n+'?'))return;await authFetch('/api/friends/block',{method:'POST',body:JSON.stringify({target:n})});loadFriends();renderUsers()}
-async function unblockUser(n){await authFetch('/api/friends/unblock',{method:'POST',body:JSON.stringify({target:n})});showToast(n+' разблокирован','🔓');loadFriends()}
+async function unblockUser(n){await authFetch('/api/friends/unblock',{method:'POST',body:JSON.stringify({target:n})});showToast(n+' разблокирован','🔓');await loadFriends();if(chatWith===n)await loadMessages(n);}
 async function blockFromChat(){if(!chatWith)return;if(!confirm('Заблокировать '+chatWith+'?'))return;await authFetch('/api/friends/block',{method:'POST',body:JSON.stringify({target:chatWith})});chatWith='';$('emptyChat').style.display='flex';$('chatWrap').style.display='none';loadFriends();renderUsers()}
 
 async function openChat(nick){
   chatWith=nick;unread[nick]=0;
   renderUsers();
-  // Обновить бейджи после сброса непрочитанных
   updateChatsBadge();
   updateTabTitle();
   $('emptyChat').style.display='none';$('chatWrap').style.display='flex';
   openChatMobile();
   $('chName').textContent=nick;$('typingInd').classList.remove('show');
   updateChHeader();$('messages').innerHTML='';
-  try{const r=await authFetch('/api/messages?with='+encodeURIComponent(nick));const d=await r.json();if(d.ok)d.messages.forEach(appendMsg);scrollBot();}catch{}
+  await loadMessages(nick);
   $('msgIn').focus();navTab('messages');
+}
+
+async function loadMessages(nick){
+  let waited=0;
+  while(!myToken&&waited<3000){await new Promise(r=>setTimeout(r,100));waited+=100;}
+  if(!myToken)return;
+  try{
+    const r=await authFetch('/api/messages?with='+encodeURIComponent(nick));
+    if(!r.ok)return;
+    const d=await r.json();
+    if(d.ok&&chatWith===nick){
+      $('messages').innerHTML='';
+      d.messages.forEach(appendMsg);
+      scrollBot();
+    }
+  }catch(e){console.error('loadMessages error',e);}
 }
 
 function appendMsg(msg){
@@ -1084,7 +1101,12 @@ function initSocketExtras(){
   });
   socket.on('reaction_updated',data=>{
     const container=document.querySelector('.reactions[data-msg-id="'+data.id+'"]');
-    if(container)renderReactions(container,data.reactions,data.id);
+    if(container){
+      renderReactions(container,data.reactions,data.id);
+    } else if(chatWith) {
+      // сообщение не в DOM — перезагружаем чат
+      loadMessages(chatWith);
+    }
   });
 }
 </script>
