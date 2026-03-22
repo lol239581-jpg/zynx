@@ -392,7 +392,7 @@ emailjs.init('hzbhHAAc7mOxiRFZx');
 
 async function sendCodeEmail(to, nickname, code) {
   try {
-    await emailjs.send('service_sng9xwa', 'template_45ps89b', {
+    await emailjs.send('service_sng9xwa', 'template_rt0pqcb', {
       email: to,
       passcode: code,
       time: new Date(Date.now() + 10*60*1000).toLocaleTimeString()
