@@ -5,6 +5,15 @@ import json as _json
 from functools import wraps
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import cloudinary
+import cloudinary.uploader
+
+cloudinary.config(
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME',''),
+    api_key=os.environ.get('CLOUDINARY_API_KEY',''),
+    api_secret=os.environ.get('CLOUDINARY_API_KEY_SECRET',''),
+    secure=True
+)
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = "zynx-secret-key-2026-xK9mPqL3vNcR7"
@@ -527,6 +536,50 @@ def delete_message():
         cur.execute('UPDATE messages SET deleted_for=%s WHERE id=%s',(','.join(deleted),msg_id))
         conn.commit(); cur.close(); conn.close()
     return jsonify({'ok':True})
+
+@app.route('/api/upload', methods=['POST'])
+@require_auth
+def upload_file():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'ok': False, 'error': 'Файл не найден.'}), 400
+        f = request.files['file']
+        if not f.filename:
+            return jsonify({'ok': False, 'error': 'Пустой файл.'}), 400
+        # Определяем тип
+        mime = f.mimetype or ''
+        if mime.startswith('image/'):
+            rtype = 'image'
+        elif mime.startswith('video/'):
+            rtype = 'video'
+        elif mime.startswith('audio/'):
+            rtype = 'audio'
+        else:
+            rtype = 'raw'
+        # Лимит 50MB
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(0)
+        if size > 50 * 1024 * 1024:
+            return jsonify({'ok': False, 'error': 'Файл слишком большой (макс 50MB).'}), 400
+        result = cloudinary.uploader.upload(
+            f,
+            resource_type=rtype,
+            folder='zynx',
+            use_filename=True,
+            unique_filename=True
+        )
+        return jsonify({
+            'ok': True,
+            'url': result['secure_url'],
+            'type': rtype,
+            'name': f.filename,
+            'size': size
+        })
+    except Exception as e:
+        import traceback
+        print('[UPLOAD ERROR]', traceback.format_exc())
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 @socketio.on('join')
 def on_join(data):
