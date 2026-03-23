@@ -195,6 +195,19 @@ input:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,92,252,.15)}
 .msg-input:focus{border-color:var(--a1)}
 .img-btn{width:44px;height:44px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:20px;transition:background .2s}
 .img-btn:hover{background:rgba(124,92,252,.2)}
+.file-preview{display:none;align-items:center;gap:8px;padding:8px 12px;background:rgba(124,92,252,.1);border:1px solid rgba(124,92,252,.3);border-radius:10px;margin:6px 14px 0;font-size:12px;color:#e8e8f0}
+.file-preview.show{display:flex}
+.file-preview-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.file-preview-cancel{background:none;border:none;cursor:pointer;color:#f87171;font-size:16px;padding:0;line-height:1}
+.file-preview-img{width:40px;height:40px;border-radius:6px;object-fit:cover}
+.mbubble.file{display:flex;align-items:center;gap:8px;padding:10px 14px}
+.mbubble.file .file-icon{font-size:24px;flex-shrink:0}
+.mbubble.file .file-info{display:flex;flex-direction:column;gap:2px}
+.mbubble.file .file-name{font-size:13px;font-weight:600;word-break:break-all}
+.mbubble.file .file-size{font-size:11px;opacity:.6}
+.mbubble.file a{color:inherit;text-decoration:none}
+.mbubble.audio audio{max-width:220px;height:32px;margin-top:4px}
+.mbubble.video video{max-width:260px;max-height:200px;border-radius:8px;display:block}
 .send-btn{width:44px;height:44px;border-radius:12px;background:var(--ag);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(124,92,252,.3);transition:opacity .2s,transform .15s}
 .send-btn:hover{opacity:.9;transform:translateY(-1px)}
 .send-btn svg{width:18px;height:18px;fill:none;stroke:#fff;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
@@ -372,9 +385,15 @@ input:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,92,252,.15)}
         </div>
         <div class="messages" id="messages"></div>
         <div class="typing" id="typingInd"><div class="tdots"><span></span><span></span><span></span></div><span id="typingName"></span> печатает...</div>
+        <div class="file-preview" id="filePreview">
+          <span id="filePreviewIcon" style="font-size:20px">📄</span>
+          <span class="file-preview-name" id="filePreviewName"></span>
+          <span id="filePreviewSize" style="color:#9999bb;font-size:11px;flex-shrink:0"></span>
+          <button class="file-preview-cancel" onclick="cancelFile()">✕</button>
+        </div>
         <div class="input-area">
-          <button class="img-btn" onclick="$('imgIn').click()" title="Отправить фото">🖼</button>
-          <input type="file" id="imgIn" accept="image/*" style="display:none" onchange="sendImg(this)"/>
+          <button class="img-btn" onclick="$('fileIn').click()" title="Отправить файл">📎</button>
+          <input type="file" id="fileIn" style="display:none" onchange="onFileSelected(this)"/>
           <textarea class="msg-input" id="msgIn" placeholder="Написать..." rows="1"
             oninput="autoResize(this);onTyping()"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
@@ -718,7 +737,8 @@ function initSocket(){
       // ── ФИЧА 3: бейдж на вкладке чатов и на заголовке браузера ──
       updateChatsBadge();
       updateTabTitle();
-      showToast(msg.from+': '+(msg.type==='image'?'📷 Фото':msg.text.slice(0,40)),'💬');
+      const typeLabel = msg.type==='image'?'📷 Фото':msg.type==='video'?'🎥 Видео':msg.type==='audio'?'🎵 Аудио':msg.type==='file'?'📄 Файл':msg.text.slice(0,40);
+      showToast(msg.from+': '+typeLabel,'💬');
     }
   });
   socket.on('message_deleted',data=>{
@@ -906,14 +926,30 @@ function appendMsg(msg){
   const wrap=document.createElement('div');wrap.className='mwrap';
   const b=document.createElement('div');
   const isDel=msg.text==='🗑 Сообщение удалено';
-  const isImg=msg.type==='image'&&!isDel;
+  const isImg=(msg.type==='image'||msg.type==='video'||msg.type==='audio'||msg.type==='file')&&!isDel;
   b.className='mbubble'+(isDel?' del':'')+(isImg?' img':'');
   b.dataset.id=msg.id;
-  if(isImg){
+  const mtype = msg.type || 'text';
+  if(mtype==='image'){
     const img=document.createElement('img');img.src=msg.text;
     img.onclick=e=>{e.stopPropagation();$('viewerImg').src=msg.text;$('viewer').classList.add('show')};
     b.appendChild(img);
-  }else{b.textContent=msg.text}
+  } else if(mtype==='video'){
+    const vid=document.createElement('video');vid.src=msg.text;vid.controls=true;vid.preload='metadata';
+    b.className='mbubble video';b.appendChild(vid);
+  } else if(mtype==='audio'){
+    const aud=document.createElement('audio');aud.src=msg.text;aud.controls=true;
+    const cap=document.createElement('div');cap.style.cssText='font-size:12px;margin-bottom:4px;opacity:.7';
+    cap.textContent=(msg.caption||'').split('|')[0]||'Аудио';
+    b.className='mbubble audio';b.appendChild(cap);b.appendChild(aud);
+  } else if(mtype==='file'){
+    const parts=(msg.caption||'').split('|');
+    const fname=parts[0]||'Файл';const fsize=parts[1]||'';
+    b.className='mbubble file';
+    b.innerHTML='<span class="file-icon">📄</span><div class="file-info"><a href="'+msg.text+'" target="_blank" download class="file-name">'+fname+'</a><span class="file-size">'+fsize+'</span></div>';
+  } else {
+    b.textContent=msg.text;
+  }
   // long press for mobile
   let touchTimer=null;
   b.addEventListener('touchstart',e=>{touchTimer=setTimeout(()=>{e.preventDefault();showCtx(e.touches[0],msg.id,isMine,!isImg&&!isDel)},500)},{passive:false});
@@ -935,12 +971,56 @@ function appendMsg(msg){
 }
 function scrollBot(){const m=$('messages');m.scrollTop=m.scrollHeight}
 
-function sendImg(inp){
-  const file=inp.files[0];if(!file||!chatWith||!socket)return;
-  if(file.size>5*1024*1024){showToast('Фото слишком большое (макс 5MB)','⚠️');inp.value='';return}
-  const reader=new FileReader();
-  reader.onload=e=>socket.emit('private_message',{token:myToken,from:myNick,to:chatWith,text:e.target.result,type:'image'});
-  reader.readAsDataURL(file);inp.value='';
+let pendingFile = null;
+
+function onFileSelected(inp){
+  const file = inp.files[0]; inp.value='';
+  if(!file) return;
+  if(file.size > 50*1024*1024){showToast('Файл слишком большой (макс 50MB)','⚠️');return;}
+  pendingFile = file;
+  const icon = file.type.startsWith('image/') ? '🖼' : file.type.startsWith('video/') ? '🎥' : file.type.startsWith('audio/') ? '🎵' : '📄';
+  $('filePreviewIcon').textContent = icon;
+  $('filePreviewName').textContent = file.name;
+  $('filePreviewSize').textContent = formatSize(file.size);
+  $('filePreview').classList.add('show');
+}
+
+function cancelFile(){
+  pendingFile = null;
+  $('filePreview').classList.remove('show');
+}
+
+function formatSize(bytes){
+  if(bytes < 1024) return bytes + ' B';
+  if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(1) + ' MB';
+}
+
+function getFileType(file){
+  if(file.type.startsWith('image/')) return 'image';
+  if(file.type.startsWith('video/')) return 'video';
+  if(file.type.startsWith('audio/')) return 'audio';
+  return 'file';
+}
+
+async function uploadAndSend(){
+  if(!pendingFile || !chatWith || !socket) return;
+  const file = pendingFile;
+  cancelFile();
+  showToast('Загружаем файл...','📤');
+  try{
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await authFetch('/api/upload', {method:'POST', headers:{}, body:fd});
+    const d = await r.json();
+    if(!d.ok){showToast(d.error||'Ошибка загрузки','⚠️');return;}
+    const msgType = getFileType(file);
+    socket.emit('private_message',{
+      token:myToken, from:myNick, to:chatWith,
+      text: d.url, type: msgType,
+      caption: file.name + '|' + formatSize(file.size)
+    });
+  }catch(e){showToast('Ошибка загрузки','⚠️');console.error(e);}
 }
 
 function showCtx(e,id,isMine,isText){
@@ -962,6 +1042,7 @@ async function delMsg(mode){
 }
 
 function sendMsg(){
+  if(pendingFile){uploadAndSend();return;}
   const text=$('msgIn').value.trim();
   if(!text||!chatWith||!socket)return;
   socket.emit('private_message',{token:myToken,from:myNick,to:chatWith,text,type:'text'});
@@ -998,7 +1079,9 @@ function saveToken(t){localStorage.setItem('zynx_token',t)}
 function loadToken(){return localStorage.getItem('zynx_token')||''}
 function clearToken(){localStorage.removeItem('zynx_token')}
 function authFetch(url,opts={}){
-  opts.headers=Object.assign({'Content-Type':'application/json','Authorization':'Bearer '+myToken},opts.headers||{});
+  const isFormData = opts.body instanceof FormData;
+  const base = isFormData ? {} : {'Content-Type':'application/json'};
+  opts.headers=Object.assign(base,{'Authorization':'Bearer '+myToken},opts.headers||{});
   return fetch(url,opts);
 }
 
