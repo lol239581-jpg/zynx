@@ -3,4 +3,4 @@ flask-socketio
 gevent
 gevent-websocket
 psycopg2-binary
-gunicorn
+cloudinary
