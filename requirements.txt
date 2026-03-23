@@ -1,6 +1,6 @@
+gunicorn
+gevent
 flask
 flask-socketio
-gevent
-gevent-websocket
 psycopg2-binary
 cloudinary
