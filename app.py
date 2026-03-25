@@ -1,3 +1,12 @@
+# gevent monkey-patch MUST be the very first thing
+# иначе будет "maximum recursion depth exceeded"
+try:
+    from gevent import monkey
+    monkey.patch_all()
+    _ASYNC_MODE = 'gevent'
+except ImportError:
+    _ASYNC_MODE = 'threading'
+
 from flask import Flask, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 import random, string, re, os, time, hashlib, uuid, urllib.request, urllib.error, urllib.parse
@@ -17,7 +26,7 @@ cloudinary.config(
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = "zynx-secret-key-2026-xK9mPqL3vNcR7"
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_ASYNC_MODE)
 
 SMTP_USER = "zynx.messanger@gmail.com"
 
@@ -194,18 +203,8 @@ def index(): return send_from_directory('.', 'index.html')
 
 @app.route('/static/icon.png')
 def icon():
-    # Генерируем SVG-иконку и возвращаем как PNG через встроенный SVG
-    svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#7c5cfc"/>
-      <stop offset="100%" style="stop-color:#fc5cbc"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="14" fill="url(#g)"/>
-  <text x="32" y="44" font-size="32" text-anchor="middle" font-family="sans-serif">Z</text>
-</svg>'''
     from flask import Response
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#7c5cfc"/><stop offset="100%" style="stop-color:#fc5cbc"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#g)"/><text x="32" y="44" font-size="36" text-anchor="middle" font-family="sans-serif" fill="white" font-weight="bold">Z</text></svg>'
     return Response(svg, mimetype='image/svg+xml')
 
 def verify_hcaptcha(token):
@@ -557,17 +556,13 @@ def delete_message():
 @require_auth
 def upload_file():
     try:
-        # Проверяем что Cloudinary настроен
         if not os.environ.get('CLOUDINARY_CLOUD_NAME'):
             return jsonify({'ok': False, 'error': 'Загрузка файлов не настроена. Задайте CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY и CLOUDINARY_API_KEY_SECRET.'}), 503
-
         if 'file' not in request.files:
             return jsonify({'ok': False, 'error': 'Файл не найден.'}), 400
         f = request.files['file']
         if not f.filename:
             return jsonify({'ok': False, 'error': 'Пустой файл.'}), 400
-
-        # Определяем тип
         mime = f.mimetype or ''
         if mime.startswith('image/'):
             rtype = 'image'
@@ -577,14 +572,11 @@ def upload_file():
             rtype = 'audio'
         else:
             rtype = 'raw'
-
-        # Лимит 50MB
         f.seek(0, 2)
         size = f.tell()
         f.seek(0)
         if size > 50 * 1024 * 1024:
             return jsonify({'ok': False, 'error': 'Файл слишком большой (макс 50MB).'}), 400
-
         result = cloudinary.uploader.upload(
             f,
             resource_type=rtype,
@@ -601,7 +593,7 @@ def upload_file():
         })
     except cloudinary.exceptions.Error as e:
         print('[CLOUDINARY ERROR]', e)
-        return jsonify({'ok': False, 'error': f'Ошибка Cloudinary: {e}. Проверьте API-ключи.'}), 500
+        return jsonify({'ok': False, 'error': f'Ошибка Cloudinary: {e}'}), 500
     except Exception as e:
         import traceback
         print('[UPLOAD ERROR]', traceback.format_exc())
@@ -672,3 +664,4 @@ def on_stop_typing(data):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     socketio.run(app, host='0.0.0.0', port=port, debug=False)
+    
