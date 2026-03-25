@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Zynx</title>
-<link rel="icon" type="image/png" href="/static/icon.png"/>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'><stop offset='0%25' style='stop-color:%237c5cfc'/><stop offset='100%25' style='stop-color:%23fc5cbc'/></linearGradient></defs><rect width='64' height='64' rx='14' fill='url(%23g)'/><text x='32' y='44' font-size='36' text-anchor='middle' font-family='sans-serif' fill='white' font-weight='bold'>Z</text></svg>"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
@@ -277,7 +277,7 @@ input:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(124,92,252,.15)}
 <div id="authScreen">
 <div class="card">
   <div class="logo">
-    <div class="logo-row"><div class="logo-icon"><img src="/static/icon.png" onerror="this.parentElement.innerHTML='🎮'"/></div><div class="logo-name">ZYNX</div></div>
+    <div class="logo-row"><div class="logo-icon" style="background:linear-gradient(135deg,#7c5cfc,#fc5cbc);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px;">Z</div><div class="logo-name">ZYNX</div></div>
     <div class="logo-sub">// connect · play · vibe</div>
   </div>
   <div class="tabs"><button class="tab on" onclick="tab('reg')">Регистрация</button><button class="tab" onclick="tab('login')">Войти</button></div>
