@@ -1267,8 +1267,20 @@ function renderEditor(){
     +'<div class="cgrid">'+colHtml+'</div>'
     +'<button class="zbtn" onclick="saveProfile()">Сохранить</button>';
 }
-function selArt(id){_ea=id;renderEditor()}
-function selCol(c){_ec=c;renderEditor()}
+function selArt(id){
+  _ea=id;
+  // update art grid selection
+  document.querySelectorAll('.art-opt').forEach(el=>el.classList.toggle('sel',el.onclick.toString().includes("'"+id+"'")));
+  // update preview image
+  const prev=$('pavPrev');if(prev){const img=prev.querySelector('img');if(img)img.src=artById(id).url;}
+}
+function selCol(c){
+  _ec=c;
+  // update color grid selection
+  document.querySelectorAll('.copt').forEach(el=>el.classList.toggle('sel',el.style.background===c));
+  // update preview background
+  const prev=$('pavPrev');if(prev) prev.style.background=c;
+}
 function openMyProfile(){_ec=myProfile.avatar_color||'#6366f1';_ea=myProfile.avatar_art||'a1';$('profTitle').textContent='Мой профиль';renderEditor();$('profModal').classList.add('show')}
 async function saveProfile(){
   try{
